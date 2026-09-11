@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=File Finder
+GenericName=File Search
+Comment=Search every file, preview it, and open it or its folder
+Exec=@EXEC@
+Icon=filefinder
+Terminal=false
+Categories=Utility;FileTools;System;
+Keywords=search;find;file;locate;folder;
+StartupNotify=true
+StartupWMClass=filefinder
+Actions=Reindex;
+
+[Desktop Action Reindex]
+Name=Rescan all files
+Exec=@EXEC@ --reindex

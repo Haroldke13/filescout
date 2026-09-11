@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>File Finder</title>
+<link rel="icon" type="image/png" sizes="256x256" href="/static/icon.png">
+<link rel="icon" type="image/png" sizes="64x64" href="/static/icon-64.png">
+<style>
+  :root{
+    --bg:#0e1416; --panel:#151d20; --panel2:#1d282c; --line:#27363b;
+    --fg:#e6edef; --dim:#8aa0a6; --accent:#2dd4bf; --accent2:#38bdf8; --warn:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);overflow:hidden;
+    font:14px/1.5 system-ui,-apple-system,"Segoe UI",Ubuntu,sans-serif;
+    display:flex;flex-direction:column}
+  header{display:flex;gap:9px;align-items:center;padding:10px 13px;background:var(--panel);
+    border-bottom:1px solid var(--line);flex:0 0 auto;flex-wrap:wrap}
+  h1{font-size:15px;margin:0;font-weight:600;white-space:nowrap}
+  h1 span{color:var(--accent)}
+  input,select{background:var(--bg);border:1px solid var(--line);color:var(--fg);
+    padding:7px 10px;border-radius:7px;font-size:13px;font-family:inherit}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  #q{flex:1;min-width:190px}
+  select{cursor:pointer;max-width:210px}
+  .stats{color:var(--dim);font-size:12px;white-space:nowrap;margin-left:auto}
+  main{flex:1;display:flex;min-height:0}
+  #list{width:52%;overflow-y:auto;border-right:1px solid var(--line)}
+  .row{display:flex;gap:10px;align-items:center;padding:8px 13px;cursor:pointer;
+    border-bottom:1px solid #182124}
+  .row:hover{background:var(--panel2)}
+  .row.sel{background:#13333a;border-left:3px solid var(--accent);padding-left:10px}
+  .ic{width:34px;flex:0 0 auto;text-align:center;font-size:10px;font-weight:700;
+    color:var(--accent);background:var(--panel2);border-radius:4px;padding:3px 0;
+    text-transform:uppercase;overflow:hidden}
+  .nm{flex:1;min-width:0}
+  .nm b{display:block;font-weight:500;font-size:13px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .nm i{display:block;font-style:normal;font-size:11px;color:var(--dim);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+  .mt{flex:0 0 auto;font-size:11px;color:var(--dim);text-align:right;
+    font-variant-numeric:tabular-nums}
+  #side{flex:1;display:flex;flex-direction:column;min-width:0}
+  .ph{padding:11px 15px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .ph b{font-size:13.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ph small{color:var(--dim);font-size:11.5px;display:block;margin-top:2px;
+    word-break:break-all;line-height:1.35}
+  .acts{display:flex;gap:7px;padding:10px 15px;border-bottom:1px solid var(--line);
+    flex:0 0 auto;flex-wrap:wrap}
+  button{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    padding:7px 12px;border-radius:6px;cursor:pointer;font-size:12.5px;font-family:inherit}
+  button:hover{border-color:var(--accent)}
+  button.p{background:var(--accent);border-color:var(--accent);color:#06302b;font-weight:600}
+  #prev{flex:1;overflow:auto;padding:13px 15px;min-height:0}
+  pre{margin:0;font:12px/1.5 ui-monospace,"Ubuntu Mono",Menlo,monospace;
+    white-space:pre-wrap;word-break:break-word;color:#c8d6da}
+  img.pv{max-width:100%;border-radius:8px;background:#000}
+  .empty{padding:44px 20px;text-align:center;color:var(--dim);font-size:13px}
+  .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+    background:var(--accent);color:#06302b;padding:9px 16px;border-radius:8px;
+    font-size:13px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none}
+  .toast.on{opacity:1}
+  @media (max-width:820px){ main{flex-direction:column} #list{width:100%;height:48%;
+    border-right:0;border-bottom:1px solid var(--line)} }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔍 File <span>Finder</span></h1>
+  <input id="q" placeholder="Search file names…  (press /)" autocomplete="off">
+  <select id="ext"><option value="">All extensions</option></select>
+  <select id="sort">
+    <option value="name">Name A–Z</option>
+    <option value="newest">Newest first</option>
+    <option value="oldest">Oldest first</option>
+    <option value="size">Largest first</option>
+  </select>
+  <div class="stats" id="stats">loading…</div>
+</header>
+<main>
+  <div id="list"><div class="empty">Type to search, or pick an extension.</div></div>
+  <div id="side">
+    <div class="ph"><b id="pn">Nothing selected</b><small id="pp">Pick a result to preview it</small></div>
+    <div class="acts">
+      <button class="p" id="of">Open file</button>
+      <button id="od">Open folder</button>
+      <button id="cp">Copy path</button>
+    </div>
+    <div id="prev"><div class="empty">No preview</div></div>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+const TOKEN=new URLSearchParams(location.search).get('t')||'';
+const q=s=>document.querySelector(s);
+const api=(p,o)=>fetch(p+(p.includes('?')?'&':'?')+'t='+encodeURIComponent(TOKEN),o);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let HOME='', rows=[], sel=-1, timer=null;
+
+const sz=b=>b>=1e9?(b/1e9).toFixed(1)+' GB':b>=1e6?(b/1e6).toFixed(1)+' MB':b>=1e3?Math.round(b/1e3)+' KB':b+' B';
+const shortp=p=>HOME&&p.startsWith(HOME)?'~'+p.slice(HOME.length):p;
+const when=t=>new Date(t*1000).toLocaleDateString(undefined,{year:'2-digit',month:'short',day:'numeric'});
+function toast(m){const t=q('#toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),1600);}
+
+async function boot(){
+  const s=await (await api('/api/stats')).json();
+  HOME=s.home;
+  q('#stats').textContent=`${s.total.toLocaleString()} files · ${sz(s.bytes)} · ${s.folders.toLocaleString()} folders`;
+  const e=await (await api('/api/exts')).json();
+  const sel=q('#ext');
+  for(const x of e.exts){
+    const o=document.createElement('option');
+    o.value=x.ext; o.textContent=`.${x.ext}  (${x.n.toLocaleString()})`;
+    sel.appendChild(o);
+  }
+  search();
+}
+
+async function search(){
+  const term=q('#q').value.trim(), ext=q('#ext').value, sort=q('#sort').value;
+  if(!term && !ext){ q('#list').innerHTML='<div class="empty">Type to search, or pick an extension.</div>'; rows=[]; return; }
+  const r=await (await api(`/api/search?q=${encodeURIComponent(term)}&ext=${encodeURIComponent(ext)}&sort=${sort}&limit=300`)).json();
+  rows=r.results;
+  if(!rows.length){ q('#list').innerHTML='<div class="empty">No matches.</div>'; return; }
+  const f=document.createDocumentFragment();
+  rows.forEach((x,i)=>{
+    const d=document.createElement('div'); d.className='row'; d.dataset.i=i;
+    d.innerHTML=`<div class="ic">${esc((x.ext||'?').slice(0,4))}</div>
+      <div class="nm"><b>${esc(x.name)}</b><i>${esc(shortp(x.folder))}</i></div>
+      <div class="mt">${sz(x.size)}<br>${when(x.mtime)}</div>`;
+    d.onclick=()=>pick(i);
+    d.ondblclick=()=>act('file');
+    f.appendChild(d);
+  });
+  q('#list').innerHTML=''; q('#list').appendChild(f);
+  q('#stats').textContent=`${r.shown} of ${r.total.toLocaleString()} matches`;
+  pick(0);
+}
+
+async function pick(i){
+  if(i<0||i>=rows.length) return;
+  sel=i;
+  document.querySelectorAll('.row').forEach(e=>e.classList.toggle('sel',+e.dataset.i===i));
+  const x=rows[i];
+  q('#pn').textContent=x.name; q('#pp').textContent=shortp(x.path);
+  const el=document.querySelector('.row.sel'); if(el) el.scrollIntoView({block:'nearest'});
+  const pv=q('#prev'); pv.innerHTML='<div class="empty">Loading…</div>';
+  if(x.kind==='image'){
+    pv.innerHTML=`<img class="pv" src="/api/preview?path=${encodeURIComponent(x.path)}&t=${encodeURIComponent(TOKEN)}">`;
+    return;
+  }
+  const r=await api('/api/preview?path='+encodeURIComponent(x.path));
+  if(!r.ok){ pv.innerHTML='<div class="empty">No preview available.</div>'; return; }
+  const d=await r.json();
+  if(d.text!==undefined){
+    pv.innerHTML='<pre>'+esc(d.text)+'</pre>'+(d.truncated?'<div class="empty">… truncated</div>':'');
+  } else { pv.innerHTML=`<div class="empty">${esc(d.note||'No preview')}</div>`; }
+}
+
+async function act(what){
+  if(sel<0) return toast('Nothing selected');
+  const r=await api('/api/open',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path:rows[sel].path,what})});
+  const d=await r.json();
+  toast(r.ok?(what==='folder'?'Opened folder':'Opened file'):(d.error||'Failed'));
+}
+
+q('#of').onclick=()=>act('file');
+q('#od').onclick=()=>act('folder');
+q('#cp').onclick=async()=>{ if(sel<0)return;
+  try{ await navigator.clipboard.writeText(rows[sel].path); toast('Path copied'); }
+  catch{ toast('Copy blocked'); } };
+q('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(search,180);};
+q('#ext').onchange=search; q('#sort').onchange=search;
+document.addEventListener('keydown',e=>{
+  if(e.key==='/'&&e.target.tagName!=='INPUT'){e.preventDefault();q('#q').focus();return;}
+  if(e.target.tagName==='INPUT'&&e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Enter')return;
+  if(e.key==='ArrowDown'){e.preventDefault();pick(Math.min(sel+1,rows.length-1));}
+  else if(e.key==='ArrowUp'){e.preventDefault();pick(Math.max(sel-1,0));}
+  else if(e.key==='Enter'){e.preventDefault();act(e.shiftKey?'folder':'file');}
+});
+boot();
+</script>
+</body>
+</html>

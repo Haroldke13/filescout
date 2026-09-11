@@ -1,0 +1,9 @@
+# Generated at runtime — never commit
+files.db
+files.db-wal
+files.db-shm
+*.db.tmp
+*.log
+browser-profile/
+__pycache__/
+*.pyc

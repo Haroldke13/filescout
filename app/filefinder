@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# filefinder — search every file on your machine and open it or its folder.
+set -euo pipefail
+APP_DIR="$HOME/.local/share/filefinder"
+PROFILE="$APP_DIR/browser-profile"
+LOG="$APP_DIR/server.log"
+DB="$APP_DIR/files.db"
+
+usage(){ cat <<U
+filefinder — search, preview and open any file
+
+  filefinder             launch the search window
+  filefinder --reindex   rescan your home directory, then launch
+  filefinder --scan-only rescan and exit
+  filefinder --all       rescan INCLUDING site-packages/node_modules/caches
+  filefinder --serve     run the server only; open the printed URL yourself
+U
+}
+REINDEX=0 SCAN=0 ALL=0 SERVE=0
+for a in "$@"; do case "$a" in
+  --reindex) REINDEX=1;; --scan-only) REINDEX=1; SCAN=1;;
+  --all) REINDEX=1; ALL=1;; --serve) SERVE=1;;
+  -h|--help) usage; exit 0;;
+  *) echo "unknown option: $a" >&2; usage >&2; exit 2;; esac; done
+
+if [ ! -f "$DB" ] || [ "$REINDEX" = 1 ]; then
+  echo "Indexing your files…" >&2
+  if [ "$ALL" = 1 ]; then python3 "$APP_DIR/index_files.py" --all
+  else python3 "$APP_DIR/index_files.py"; fi
+fi
+[ "$SCAN" = 1 ] && exit 0
+[ "$SERVE" = 1 ] && exec python3 "$APP_DIR/server.py"
+
+BROWSER=""
+for c in google-chrome google-chrome-stable chromium chromium-browser; do
+  command -v "$c" >/dev/null 2>&1 && { BROWSER="$c"; break; }
+done
+[ -z "$BROWSER" ] && { echo "No Chrome/Chromium. Use 'filefinder --serve'." >&2; exit 1; }
+
+exec 3< <(python3 "$APP_DIR/server.py" --print-url 2>"$LOG")
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT INT TERM
+if ! read -r -t 20 URL <&3 || [ -z "${URL:-}" ]; then
+  echo "Server failed to start:" >&2; cat "$LOG" >&2; exit 1
+fi
+mkdir -p "$PROFILE"
+"$APP_DIR/set-window-icon.sh" filefinder "$APP_DIR/icon-wm.dat" >/dev/null 2>&1 &
+"$BROWSER" --app="$URL" --user-data-dir="$PROFILE" --no-first-run \
+  --no-default-browser-check --window-size=1320,860 --class=filefinder >>"$LOG" 2>&1 || true
