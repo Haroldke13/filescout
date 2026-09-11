@@ -100,6 +100,7 @@ def build(root: Path, db_path: Path, include_all: bool, quiet: bool):
     con.commit()
     con.close()
     tmp.replace(db_path)
+    db_path.chmod(0o600)   # the index lists every file you own
 
     if not quiet:
         dt = time.time() - t0

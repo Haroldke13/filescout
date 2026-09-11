@@ -12,6 +12,7 @@ import argparse
 import json
 import mimetypes
 import os
+import time
 import secrets
 import shutil
 import socket
@@ -217,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 data = f.open("rb").read(PREVIEW_BYTES)
             except OSError as e:
-                return self._json(403, {"error": f"cannot read: {e.strerror}"})
+                return self._json(403, {"error": "cannot read that file"})
             if b"\x00" in data[:8000]:
                 return self._json(200, {"binary": True,
                                         "note": "binary file - no text preview"})
@@ -253,7 +254,7 @@ class Handler(BaseHTTPRequestHandler):
                              stdin=subprocess.DEVNULL, start_new_session=True,
                              env={**os.environ, "DISPLAY": os.environ.get("DISPLAY", ":0")})
         except OSError as e:
-            return self._json(500, {"error": str(e)})
+            return self._json(500, {"error": "could not launch the handler"})
         return self._json(200, {"ok": True, "opened": target})
 
     def static(self, rel):
@@ -264,6 +265,29 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/"):
             ctype += "; charset=utf-8"
         return self._send(200, target.read_bytes(), ctype)
+
+
+
+def _exit_when_orphaned(httpd, interval=5.0):
+    """Shut down if our launcher goes away.
+
+    Finding 9: the launcher's EXIT trap is skipped on SIGKILL, and bash defers
+    it while the browser runs in the foreground, so a server could linger with
+    no window - an unmanaged endpoint holding a live token. Re-parenting to
+    init is the reliable signal that our launcher is gone.
+    """
+    import threading
+
+    def watch():
+        start_ppid = os.getppid()
+        while True:
+            time.sleep(interval)
+            ppid = os.getppid()
+            if ppid != start_ppid and ppid == 1:
+                httpd.shutdown()
+                return
+    t = threading.Thread(target=watch, daemon=True)
+    t.start()
 
 
 def main():
@@ -285,6 +309,7 @@ def main():
     httpd.db, httpd.token, httpd.verbose = db, token, args.verbose
     url = f"http://127.0.0.1:{port}/?t={token}"
     print(url if args.print_url else f"File Finder at {url}", flush=True)
+    _exit_when_orphaned(httpd)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
