@@ -133,6 +133,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(n) or b"{}")
         except json.JSONDecodeError:
             return self._json(400, {"error": "bad json"})
+        if path == "/api/reindex":
+            return self.api_reindex()
         if path == "/api/open":
             return self.api_open(payload)
         return self._send(404, b"not found", "text/plain; charset=utf-8")
@@ -227,6 +229,21 @@ class Handler(BaseHTTPRequestHandler):
                                     "truncated": row["size"] > PREVIEW_BYTES,
                                     "lines": text.count("\n") + 1})
         return self._json(200, {"binary": True, "note": "no preview for this type"})
+
+    def api_reindex(self):
+        """Rebuild the file index and reopen the database in place."""
+        try:
+            r = subprocess.run(
+                [sys.executable, str(APP_DIR / "index_files.py"), "--quiet"],
+                capture_output=True, text=True, timeout=1800)
+            if r.returncode != 0:
+                return self._json(500, {"error": "reindex failed"})
+            self.server.db = DB(DB_PATH)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            return self._json(500, {"error": "reindex failed"})
+        with self.server.db.conn() as c:
+            n = c.execute("SELECT COUNT(*) n FROM files").fetchone()["n"]
+        return self._json(200, {"ok": True, "total": n})
 
     def api_open(self, payload):
         """Open a file, or its containing folder, in the desktop's default app.

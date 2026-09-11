@@ -25,6 +25,11 @@
   input:focus,select:focus{outline:none;border-color:var(--accent)}
   #q{flex:1;min-width:190px}
   select{cursor:pointer;max-width:210px}
+  #refresh{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    width:32px;height:32px;border-radius:7px;cursor:pointer;font-size:15px;flex:0 0 auto}
+  #refresh:hover{border-color:var(--accent)}
+  #refresh.spin{animation:sp 1s linear infinite;pointer-events:none;color:var(--accent)}
+  @keyframes sp{to{transform:rotate(360deg)}}
   .stats{color:var(--dim);font-size:12px;white-space:nowrap;margin-left:auto}
   main{flex:1;display:flex;min-height:0}
   #list{width:52%;overflow-y:auto;border-right:1px solid var(--line)}
@@ -92,6 +97,7 @@
     <option value="oldest">Oldest first</option>
     <option value="size">Largest first</option>
   </select>
+  <button id="refresh" title="Rescan all files (F5)">⟳</button>
   <div class="stats" id="stats">loading…</div>
 </header>
 <main>
@@ -182,6 +188,19 @@ async function act(what){
   toast(r.ok?(what==='folder'?'Opened folder':'Opened file'):(d.error||'Failed'));
 }
 
+q('#refresh').onclick = async () => {
+  const b = q('#refresh'); b.classList.add('spin');
+  toast('Rescanning your files…');
+  try {
+    const r = await api('/api/reindex', {method:'POST'});
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(d.error || r.status);
+    await boot(); await search();
+    toast('Reindexed — ' + (d.total ?? 0).toLocaleString() + ' files');
+  } catch (e) { toast('Refresh failed'); }
+  finally { b.classList.remove('spin'); }
+};
+
 q('#of').onclick=()=>act('file');
 q('#od').onclick=()=>act('folder');
 q('#cp').onclick=async()=>{ if(sel<0)return;
@@ -190,6 +209,7 @@ q('#cp').onclick=async()=>{ if(sel<0)return;
 q('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(search,180);};
 q('#ext').onchange=search; q('#sort').onchange=search;
 document.addEventListener('keydown',e=>{
+  if(e.key==='F5'){e.preventDefault();q('#refresh').click();return;}
   if(e.key==='/'&&e.target.tagName!=='INPUT'){e.preventDefault();q('#q').focus();return;}
   if(e.target.tagName==='INPUT'&&e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Enter')return;
   if(e.key==='ArrowDown'){e.preventDefault();pick(Math.min(sel+1,rows.length-1));}
