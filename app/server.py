@@ -37,6 +37,77 @@ TEXT_EXT = {
 IMAGE_EXT = {"png","jpg","jpeg","gif","webp","bmp","svg","ico","avif"}
 
 
+# Revealing a file *inside* its folder has no portable command line. Each
+# manager below is listed with the flag that selects a file, or None when all
+# it will take is the folder itself. Guessing is worse than not trying:
+# pcmanfm-qt, the LXQt default, answers an unknown option with
+# "Unknown option 'select'" and exits immediately - which is why an
+# unconditional --select made the Open folder button report success and open
+# nothing at all.
+REVEAL_FLAG = {
+    "nautilus": "--select",
+    "dolphin": "--select",
+    "pcmanfm-qt": None,
+    "pcmanfm": None,
+    "thunar": None,
+    "nemo": None,
+    "caja": None,
+}
+
+
+def _file_manager():
+    """The binary that handles directories here, if it is one we recognise."""
+    try:
+        r = subprocess.run(["xdg-mime", "query", "default", "inode/directory"],
+                           capture_output=True, text=True, timeout=5)
+        desktop_id = r.stdout.strip().removesuffix(".desktop")
+    except (OSError, subprocess.SubprocessError):
+        desktop_id = ""
+    # "pcmanfm-qt.desktop" names its own binary; "org.gnome.Nautilus.desktop"
+    # does not, so try the trailing component as well before giving up and
+    # taking whichever manager we know about is installed.
+    for name in (desktop_id, desktop_id.rpartition(".")[2].lower()):
+        if name in REVEAL_FLAG and shutil.which(name):
+            return name
+    for name in REVEAL_FLAG:
+        if shutil.which(name):
+            return name
+    return None
+
+
+def _open_cmd(path, folder, what):
+    """Command line that opens `path`, or reveals it inside `folder`."""
+    if what != "folder":
+        return [shutil.which("xdg-open") or "xdg-open", path]
+    fm = _file_manager()
+    if fm:
+        exe, flag = shutil.which(fm), REVEAL_FLAG[fm]
+        return [exe, flag, path] if flag else [exe, folder]
+    return [shutil.which("xdg-open") or "xdg-open", folder]
+
+
+def _launch(cmd):
+    """Start `cmd` detached. True if it is still running or exited cleanly.
+
+    A manager that hands the job to an already-running instance exits at once
+    with 0, so a quick *non-zero* exit is a real refusal rather than a fast
+    handoff - and noticing it is what stops this endpoint answering "Opened
+    folder" for a command line the desktop threw straight back at us.
+    """
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                                start_new_session=True,
+                                env={**os.environ,
+                                     "DISPLAY": os.environ.get("DISPLAY", ":0")})
+    except OSError:
+        return False
+    try:
+        return proc.wait(timeout=1.0) == 0
+    except subprocess.TimeoutExpired:
+        return True          # still up: it owns the window now
+
+
 class DB:
     def __init__(self, path):
         self.path = path
@@ -261,18 +332,14 @@ class Handler(BaseHTTPRequestHandler):
         if not Path(target).exists():
             return self._json(410, {"error": "no longer on disk"})
 
-        if what == "folder":
-            fm = shutil.which("pcmanfm-qt")
-            cmd = [fm, "--select", p] if fm else [shutil.which("xdg-open") or "xdg-open", target]
-        else:
-            cmd = [shutil.which("xdg-open") or "xdg-open", target]
-        try:
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             stdin=subprocess.DEVNULL, start_new_session=True,
-                             env={**os.environ, "DISPLAY": os.environ.get("DISPLAY", ":0")})
-        except OSError as e:
-            return self._json(500, {"error": "could not launch the handler"})
-        return self._json(200, {"ok": True, "opened": target})
+        cmds = [_open_cmd(p, target, what)]
+        plain = [shutil.which("xdg-open") or "xdg-open", target]
+        if what == "folder" and plain != cmds[0]:
+            cmds.append(plain)   # last resort if that manager refused the line
+        for cmd in cmds:
+            if _launch(cmd):
+                return self._json(200, {"ok": True, "opened": target})
+        return self._json(500, {"error": "the desktop would not open that"})
 
     def static(self, rel):
         target = (STATIC_DIR / rel).resolve()
