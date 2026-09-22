@@ -9,6 +9,7 @@ present in the index, never on an arbitrary path supplied by the caller.
 """
 
 import argparse
+import contextlib
 import json
 import mimetypes
 import os
@@ -114,10 +115,22 @@ class DB:
         if not path.exists():
             raise SystemExit(f"No index at {path}\nRun: python3 {APP_DIR}/index_files.py")
 
+    @contextlib.contextmanager
     def conn(self):
+        """A read-only connection that is *closed* when the block exits.
+
+        sqlite3's own connection context manager only ends the transaction -
+        it never closes the handle. Used bare as `with sqlite3.connect(...)`
+        every request leaked an open descriptor on files.db, and the server
+        died at the 1024-fd limit with "Too many open files" once a session
+        had served roughly that many searches.
+        """
         c = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, check_same_thread=False)
         c.row_factory = sqlite3.Row
-        return c
+        try:
+            yield c
+        finally:
+            c.close()
 
 
 class Handler(BaseHTTPRequestHandler):
